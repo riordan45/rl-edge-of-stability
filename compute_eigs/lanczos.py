@@ -36,5 +36,5 @@ def get_hessian_eigenvalues(agent, sample, batch_size, neigs=5):
     theta_t = parameters_to_vector(agent.policy_net.parameters())
     nparams = len(theta_t)
     evals, evecs = lanczos(hvp_delta, nparams, neigs=neigs)
-    scalar_product=  np.dot(evecs[:, 0], theta_t.detach().cpu().numpy())
+    scalar_product = np.dot(evecs[:, 0], theta_t.detach().cpu().numpy())
     return (evals, scalar_product)

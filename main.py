@@ -28,33 +28,18 @@ def count_parameters(model):
     print(f"Total Trainable Params: {total_params}")
     return total_params
 
-#Global variables
-REPLAY_BUFFER_SIZE = 100000
-TARGET_NETWORK_UPDATE_FREQ = 1000
-TRAINING_FREQ = 1
-NUM_FRAMES = 1000000
-FIRST_N_FRAMES = 100000
-REPLAY_START_SIZE = 5000
-END_EPSILON = 0.1
-STEP_SIZE = 0.00025
-GRAD_MOMENTUM = 0.95
-SQUARED_GRAD_MOMENTUM = 0.95
-MIN_SQUARED_GRAD = 0.01
-GAMMA = 0.99
-EPSILON = 1.0
-
-def world_dynamics(t, replay_start_size, state, env, agent, online):
+def world_dynamics(t, state, env, agent, cmdl):
 
     # A uniform random policy is run before the learning starts
-    if online:
-        if t < replay_start_size:
+    if cmdl.online:
+        if t < cmdl.replay_start_size:
             action = torch.tensor([[random.randrange(agent.no_actions)]], device=agent.device)
         else:
             # Epsilon-greedy behavior policy for action selection
-            # Epsilon is annealed linearly from 1.0 to END_EPSILON over the FIRST_N_FRAMES and stays 0.1 for the
+            # Epsilon is annealed linearly from 1.0 to END_EPSILON over the cmdl.decay_epsilon_for_these_timesteps and stays 0.1 for the
             # remaining frames
-            epsilon = END_EPSILON if t - replay_start_size >= FIRST_N_FRAMES \
-                else ((END_EPSILON - EPSILON) / FIRST_N_FRAMES) * (t - replay_start_size) + EPSILON
+            epsilon = cmdl.end_epsilon if t - cmdl.replay_start_size >= cmdl.decay_epsilon_for_these_timesteps \
+                else ((cmdl.end_epsilon - cmdl.start_epsilon) / cmdl.decay_epsilon_for_these_timesteps) * (t - cmdl.replay_start_size) + cmdl.start_epsilon
 
             if np.random.binomial(1, epsilon) == 1:
                 action = torch.tensor([[random.randrange(agent.no_actions)]], device=agent.device)
@@ -164,7 +149,6 @@ def train(env, cmdl):
     data_return_init = []
     frame_stamp_init = []
     load_path = cmdl.load_checkpoint_path
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30000, gamma=0.1)
     # Load model and optimizer if load_path is not None
     if load_path is not None and isinstance(load_path, str):
         checkpoint = torch.load(load_path)
@@ -202,7 +186,7 @@ def train(env, cmdl):
     policy_net_update_counter = policy_net_update_counter_init
 
     ##### Please specify here online, offline, corrupted_offline_percentage, hybrid offline from online buffer #####
-    training_regime = "first_million"
+    training_regime = "last_10k"
     print("Current training regime is: {}".format(training_regime))
 
     output_path = os.path.join(cmdl.checkpoint_path, cmdl.agent)
@@ -216,6 +200,9 @@ def train(env, cmdl):
     
     t_start = time.time()
     prime_sample = r_buffer.sample(cmdl.batch_size)
+    eigs, product = get_hessian_eigenvalues(agent, prime_sample, cmdl.batch_size, neigs=cmdl.no_eigs)
+                        # total_eigs.append(eigs)
+                        # total_scalar_product.append(product)
     while t < cmdl.training_steps:
         # Initialize the return for every episode (we should see this eventually increase)
         G = 0.0
@@ -229,10 +216,9 @@ def train(env, cmdl):
         is_terminated = False
         while(not is_terminated) and t < cmdl.training_steps:
             # Generate data
-            s_prime, action, reward, is_terminated = world_dynamics(t, cmdl.replay_start_size, s, env, agent, cmdl.online)
+            s_prime, action, reward, is_terminated = world_dynamics(t, s, env, agent, cmdl)
             sample = None
             # if t == 200000:
-            #     print("ENTERED")
             #     for g in optimizer.param_groups:
             #         g['lr'] = g['lr'] / 1.5
             
@@ -243,26 +229,26 @@ def train(env, cmdl):
                 if cmdl.save_online_replay:
                     r_buffer.save(s, s_prime, action, reward, is_terminated, t, cmdl.tuple_data_path)
 
-                if t > REPLAY_START_SIZE and len(r_buffer.buffer) >= agent.batch_size:
+                if t > cmdl.replay_start_size and len(r_buffer.buffer) >= agent.batch_size:
                     # Sample a batch
                     sample = r_buffer.sample(agent.batch_size)
             else:
                 sample = r_buffer.sample(agent.batch_size)
 
-            # Train every n number of frames defined by TRAINING_FREQ
-            if t % TRAINING_FREQ == 0 and sample is not None:
+            # Train every n number of frames defined by cmdl.train_freq
+            if t % cmdl.train_freq == 0 and sample is not None:
                 policy_net_update_counter += 1
                 
                 optimizer.zero_grad()
                 loss = agent.train(agent.batch_size, *agent.process_sample(sample))
                 loss.backward()
                 optimizer.step()
-                if t % 5000 == 0 and t != 0:
+                if t % cmdl.logging_frequency == 0:
                     if cmdl.compute_eigs:
-                        eigs, product = get_hessian_eigenvalues(agent, prime_sample, cmdl.batch_size, neigs=25)
+                        eigs, product = get_hessian_eigenvalues(agent, prime_sample, cmdl.batch_size, neigs=cmdl.no_eigs)
                         total_eigs.append(eigs)
                         total_scalar_product.append(product)
-                        print(eigs)
+                        # print(eigs)
 
                 if cmdl.compute_grad_norm:
                     norm = agent.calculate_gradient_norm(agent.policy_net)
@@ -277,7 +263,7 @@ def train(env, cmdl):
                 total_loss.append(loss.item())
 
             # # Update the target network only after some number of policy network updates
-            if policy_net_update_counter > 0 and policy_net_update_counter % TARGET_NETWORK_UPDATE_FREQ == 0:
+            if policy_net_update_counter > 0 and policy_net_update_counter % cmdl.target_network_update_freq == 0:
                 agent.update_target_network(agent.policy_net)
 
             G += reward.item()
@@ -297,14 +283,14 @@ def train(env, cmdl):
 
         # Logging exponentiated return only when verbose is turned on and only at 1000 episode intervals
         avg_return = 0.99 * avg_return + 0.01 * G
-        if e % cmdl.logging_frequency == 0:
+        if e % cmdl.logging_frequency_episode == 0:
             logging.info("Episode " + str(e) + " | Return: " + str(G) + " | Avg return: " +
-                         str(np.around(avg_return, 2)) + " | Frame: " + str(t)+" | Time per frame: " +str((time.time()-t_start)/t) )
+                         str(np.around(avg_return, 2)) + " | Frame: " + str(t)+" | Time per frame: " +str((time.time()-t_start)/t)
+                         + " | Eigenvalues: " + str(eigs))
 
         # Save model data and other intermediate data if the corresponding flag is true
-        if cmdl.save_checkpoint and t % cmdl.logging_frequency == 0 and sample is not None:
+        if cmdl.save_checkpoint and e % cmdl.logging_frequency_episode == 0 and sample is not None:
             
-
             torch.save({
                         'episode': e,
                         'frame': t,
@@ -329,10 +315,23 @@ def train(env, cmdl):
         
     # Write data to file
     torch.save({
-        'returns': data_return,
-        'frame_stamps': frame_stamp,
-        'policy_net_state_dict': agent.policy_net.state_dict()
-    }, os.path.join(output_path, "data_and_weights_{}".format(key)))
+                'episode': e,
+                'frame': t,
+                'policy_net_update_counter': policy_net_update_counter,
+                'policy_net_state_dict': agent.policy_net.state_dict(),
+                'target_net_state_dict': agent.target_net.state_dict() if not cmdl.target_off else [],
+                'optimizer_state_dict': optimizer.state_dict(),
+                'avg_return': avg_return,
+                'return_per_run': data_return,
+                'frame_stamp_per_run': frame_stamp,
+                'grad_norm' : total_grad_norm,
+                'eigs' : total_eigs,
+                'loss' : total_loss,
+                'update_norm' : total_update_norm,
+                'batch_size' : agent.batch_size,
+                'training_regime' : training_regime,
+                'principal_scalar_product' : total_scalar_product
+            }, os.path.join(output_path, key))
 
 def main():
     cmdl = utils.get_config()

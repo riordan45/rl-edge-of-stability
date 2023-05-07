@@ -6,21 +6,35 @@ seed: 42
 verbose: True
 game: "breakout"
 online: False
-tuple_data_path: "/home/freshpate/offline_rl_data/minatar/breakout_first_million_buffer" # path to offline data
+tuple_data_path: "/home/freshpate/offline_rl_data/breakout_offline_buffer_1mil_030" # path to offline data
 offline_data_count: 1000000 # how much offline data to load
 target_off: False
 save_checkpoint: True
 save_online_replay: False 
 load_checkpoint_path: null
-checkpoint_path: "/home/freshpate/offline_rl_data/minatar/results" # main path where to save checkpoints
+checkpoint_path: "/home/freshpate/offline_rl_data/results" # main path where to save checkpoints
 save_entire_buffer: False # whether to save each indiviual tuple of the buffer
 compute_eigs: True # compute the eigenvalues or not
 compute_update_norm: False
 compute_grad_norm: False
-logging_frequency: 100 # save checkpoint at each this every number of states
+logging_frequency: 100 # save checkpoint at each this every number of episodes
+logging_frequency_episode: 10
+no_eigs: 5 # how many eigenvalues to compute
 
 # training vars
 training_steps: 500000
+target_network_update_freq: 1000
+
+
+REPLAY_START_SIZE: 5000
+END_EPSILON: 0.1
+STEP_SIZE: 0.00025
+GRAD_MOMENTUM: 0.95
+SQUARED_GRAD_MOMENTUM: 0.95
+MIN_SQUARED_GRAD: 0.01
+gamma: 0.99
+start_epsilon: 1.0
+end_epsilon: 0.1
 
 # estimator settings
 batch_size: 512
@@ -32,11 +46,13 @@ end_epsilon: 0.1
 replay_buffer_size: 100000
 replay_start_size: 5000
 target_update_freq: 1000
+train_freq: 1
+decay_epsilon_for_these_timesteps: 100000
 gamma: 0.99
 optimizer: "sgd"
-lr: 0.004
-momentum: 0.95
-nesterov: True
+lr: 0.008
+momentum: 0.8
+nesterov: False
 beta1: 0.9
 beta2: 0.99
 adam_eps: 0.01  # Should be 0.01/batch_size in code, based on the dist. dqn paper
